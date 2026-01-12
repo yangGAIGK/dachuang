@@ -97,11 +97,11 @@ class MagnesiumDataset(Dataset):
         # Image Cleaning (Highlight Removal & Alignment)
         # -------------------------------------------------------
         # 1. Highlight Removal
-        l_median = np.median(l)
-        threshold = l_median + 70  
-        mask = l > threshold
-        if np.sum(mask) > 0:
-            l[mask] = l_median.astype(np.uint8)
+        # l_median = np.median(l)
+        # threshold = l_median + 70  
+        # mask = l > threshold
+        # if np.sum(mask) > 0:
+        #     l[mask] = l_median.astype(np.uint8)
 
         # 2. Global Brightness Alignment
         l_median_new = np.median(l) 
@@ -260,7 +260,7 @@ criterion = nn.SmoothL1Loss()
 # Slightly higher initial LR for Cosine Annealing
 optimizer = optim.Adam(model.parameters(), lr=0.0005) 
 
-num_epochs = 200
+num_epochs = 100
 
 # 🔥 [Option 2] Define Scheduler
 scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
