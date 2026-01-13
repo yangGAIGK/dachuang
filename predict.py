@@ -9,50 +9,75 @@ import numpy as np
 
 # ============================================================
 # 1. 重新定义 HybridResNet 网络结构
-# (必须与 main02.py 中的定义完全一致，否则无法加载权重)
+# (必须与 main03.py 中的定义完全一致，否则无法加载权重)
 # ============================================================
+class SEBlock(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SEBlock, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
+
 class HybridResNet(nn.Module):
     def __init__(self):
         super(HybridResNet, self).__init__()
         
-        # 加载 ResNet18 骨架 (推理时不需要下载预训练权重，设为 None 即可)
         base_model = models.resnet18(weights=None)
-        
-        # 提取卷积特征部分 (去掉最后两层)
         self.features = nn.Sequential(*list(base_model.children())[:-2])
-        
+        self.se_block = SEBlock(512)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # 统计特征层
+        # 🔥 [Option 1 Update] Statistical Feature Layer
+        # Input dim = 8 (Basic Stats) + 64 (Histogram) = 72
         self.stats_fc = nn.Sequential(
-            nn.Linear(6, 16),
+            nn.Linear(72, 64), # Expanded neurons
             nn.ReLU(),
-            nn.BatchNorm1d(16)
+            nn.BatchNorm1d(64)
         )
         
-        # 回归头
+        # Regression Head
         self.final_regressor = nn.Sequential(
-            nn.Linear(512 + 16, 64),
+            nn.Linear(512 + 64, 128),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(64, 1)
+            nn.Linear(128, 1)
         )
 
-    def forward(self, x):
-        # x: [Batch, 3, 224, 224]
-        
-        # CNN 分支
+    def forward(self, x, hist_vec):
+        # --- CNN Branch ---
         feat_map = self.features(x)
+        feat_map = self.se_block(feat_map)
         cnn_feat = self.avgpool(feat_map)
         cnn_feat = torch.flatten(cnn_feat, 1)
         
-        # 统计特征分支 (Mean/Std)
+        # --- Statistical Branch ---
+        # 1. On-the-fly Basic Stats (8 dims)
         mean_stats = torch.mean(x, dim=[2, 3])
         std_stats = torch.std(x, dim=[2, 3])
-        stats = torch.cat([mean_stats, std_stats], dim=1)
-        stats_out = self.stats_fc(stats)
         
-        # 融合与预测
+        mean_a = mean_stats[:, 1:2] 
+        mean_b = mean_stats[:, 2:3]
+        diff_ab = mean_a - mean_b
+        sum_ab  = mean_a + mean_b
+        
+        basic_stats = torch.cat([mean_stats, std_stats, diff_ab, sum_ab], dim=1)
+        
+        # 2. 🔥 Concatenate External Histogram Features (64 dims)
+        total_stats = torch.cat([basic_stats, hist_vec], dim=1)
+        
+        stats_out = self.stats_fc(total_stats)
+        
+        # --- Fusion ---
         combined = torch.cat([cnn_feat, stats_out], dim=1)
         out = self.final_regressor(combined)
         return out
@@ -99,6 +124,40 @@ def predict_temperature(image_path, model_path, device):
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB) # 先转 RGB 供显示用
     img_lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2Lab) # 再转 Lab 供模型用
 
+    l, a, b = cv2.split(img_lab)
+
+    # -------------------------------------------------------
+    # Image Cleaning (Highlight Removal & Alignment)
+    # -------------------------------------------------------
+    # 2. Global Brightness Alignment
+    l_median_new = np.median(l) 
+    shift = 128.0 - l_median_new
+    l_aligned = l.astype(np.float32) + shift
+    l_aligned = np.clip(l_aligned, 0, 255).astype(np.uint8)
+
+    # 3. Denoising
+    a_blur = cv2.GaussianBlur(a, (5, 5), 0)
+    b_blur = cv2.GaussianBlur(b, (5, 5), 0)
+    
+    img_lab_processed = cv2.merge((l_aligned, a_blur, b_blur))
+    
+    # -------------------------------------------------------
+    # 🔥 [Option 1] Calculate Color Histograms
+    # -------------------------------------------------------
+    # Calculate histogram for 'a' channel (32 bins)
+    hist_a = cv2.calcHist([a_blur], [0], None, [32], [0, 256])
+    # Calculate histogram for 'b' channel (32 bins)
+    hist_b = cv2.calcHist([b_blur], [0], None, [32], [0, 256])
+    
+    # Normalize histograms
+    cv2.normalize(hist_a, hist_a, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+    cv2.normalize(hist_b, hist_b, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+    
+    # Flatten and concatenate -> 64-dim vector
+    hist_feat = np.concatenate([hist_a, hist_b]).flatten()
+    hist_feat = torch.tensor(hist_feat, dtype=torch.float32).unsqueeze(0) # [1, 64]
+    hist_feat = hist_feat.to(device)
+
     # 3. 定义 Transform (与训练代码中的 test transform 一致)
     # 注意：训练时去掉了 ImageNet Normalize，只用了 Resize 和 ToTensor
     transform = transforms.Compose([
@@ -108,13 +167,13 @@ def predict_temperature(image_path, model_path, device):
     ])
     
     # 应用变换
-    img_tensor = transform(img_lab) 
+    img_tensor = transform(img_lab_processed) 
     img_tensor = img_tensor.unsqueeze(0) # 增加 Batch 维度 [1, 3, 224, 224]
     img_tensor = img_tensor.to(device)
 
     # --- C. 预测 ---
     with torch.no_grad():
-        output = model(img_tensor)
+        output = model(img_tensor, hist_feat)
         pred_normalized = output.item()
 
     # --- D. 反归一化 ---
@@ -129,7 +188,7 @@ def predict_temperature(image_path, model_path, device):
 if __name__ == '__main__':
     # -------------------------------------------------------------
     # 🔴 请确保路径正确
-    MODEL_PATH = 'magnesium_resnet01_model.pth'  
+    MODEL_PATH = 'magnesium_hybrid_hist_model.pth'  
     
     # 测试图片路径 (支持中文)
     TEST_IMG_PATH = r"D:\Study\大三上\science\大创\JPG-处理图\JPG-处理图\test\G10_445_10.jpg"
