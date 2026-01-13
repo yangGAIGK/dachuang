@@ -15,9 +15,10 @@ from torchvision import models, transforms
 from torch.optim.lr_scheduler import CosineAnnealingLR # [Option 2] Import Scheduler
 
 # ===========================================================
-# 1. Fix Random Seed (Ensure Reproducibility)
+# 1. 工具函数定义 (全局)
 # ===========================================================
 def setup_seed(seed):
+    """固定随机种子，保证实验可复现"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -27,35 +28,8 @@ def setup_seed(seed):
     torch.backends.cudnn.benchmark = False
     print(f"✅ Random seed fixed to: {seed}")
 
-setup_seed(42)
-
 # ===========================================================
-# 2. Data Augmentation & Preprocessing Config
-# ===========================================================
-input_size = 224
-
-data_transforms = {
-    'train': transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
-        
-        # Augmentation (Train only)
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomVerticalFlip(p=0.5),
-        transforms.RandomRotation(degrees=10),
-        
-        transforms.ToTensor(),
-    ]),
-
-    'test': transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-    ]),
-}
-
-# ===========================================================
-# 3. Custom Dataset Class (Histogram Feature Extraction Added)
+# 2. 自定义数据集类定义 (全局)
 # ===========================================================
 class MagnesiumDataset(Dataset):
     def __init__(self, img_dir, transform=None):
@@ -96,7 +70,7 @@ class MagnesiumDataset(Dataset):
         # -------------------------------------------------------
         # Image Cleaning (Highlight Removal & Alignment)
         # -------------------------------------------------------
-        # 1. Highlight Removal
+        # 1. Highlight Removal (注释保留)
         # l_median = np.median(l)
         # threshold = l_median + 70  
         # mask = l > threshold
@@ -150,32 +124,7 @@ class MagnesiumDataset(Dataset):
         return image, hist_feat, label
 
 # ===========================================================
-# 4. Dataset Splitting & Loading
-# ===========================================================
-# 🔴 Please verify your data path
-data_dir = r'D:\Study\大三上\science\大创\JPG-处理图\JPG-处理图\zhaodu11-35'
-
-full_train_ds = MagnesiumDataset(data_dir, transform=data_transforms['train'])
-full_test_ds  = MagnesiumDataset(data_dir, transform=data_transforms['test'])
-
-dataset_size = len(full_train_ds)
-indices = list(range(dataset_size))
-split = int(np.floor(0.2 * dataset_size))
-
-np.random.shuffle(indices)
-
-test_indices, train_indices = indices[:split], indices[split:]
-
-train_dataset = Subset(full_train_ds, train_indices)
-test_dataset  = Subset(full_test_ds, test_indices)
-
-print(f"Data Ready | Train: {len(train_dataset)} | Test: {len(test_dataset)}")
-
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
-
-# ===========================================================
-# 5. Model Definition (SE + Histogram Input)
+# 3. 模型组件类定义 (全局)
 # ===========================================================
 class SEBlock(nn.Module):
     def __init__(self, channel, reduction=16):
@@ -249,22 +198,8 @@ class HybridResNet(nn.Module):
         return out
 
 # ===========================================================
-# 6. Training Preparation
+# 4. 训练函数定义 (全局)
 # ===========================================================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Device: {device}")
-
-model = HybridResNet().to(device)
-
-criterion = nn.SmoothL1Loss()
-# Slightly higher initial LR for Cosine Annealing
-optimizer = optim.Adam(model.parameters(), lr=0.0005) 
-
-num_epochs = 100
-
-# 🔥 [Option 2] Define Scheduler
-scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
-
 def train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, num_epochs=20):
     since = time.time()
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -343,18 +278,11 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
     model.load_state_dict(best_model_wts)
     return model, train_loss_history, test_mae_history
 
-# Execute Training
-trained_model, train_hist, test_hist = train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, num_epochs=num_epochs)
-
-# Save Model
-save_path = 'magnesium_hybrid_hist_model.pth'
-torch.save(trained_model.state_dict(), save_path)
-print(f"💾 Model saved to: {save_path}")
-
 # ===========================================================
-# 7. Visualization
+# 5. 可视化函数定义 (全局)
 # ===========================================================
 def plot_history(train_loss, test_mae):
+    """可视化训练损失和测试MAE曲线"""
     epochs = range(1, len(train_loss) + 1)
     plt.figure(figsize=(12, 5))
 
@@ -373,4 +301,98 @@ def plot_history(train_loss, test_mae):
     plt.grid(True)
     plt.show()
 
-plot_history(train_hist, test_hist)
+# ===========================================================
+# 6. 主执行逻辑 (封装到 main 代码块)
+# ===========================================================
+if __name__ == '__main__':
+    # =======================================================
+    # 6.1 固定随机种子
+    # =======================================================
+    setup_seed(42)
+
+    # =======================================================
+    # 6.2 数据增强 & 预处理配置
+    # =======================================================
+    input_size = 224
+
+    data_transforms = {
+        'train': transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((224, 224)),
+            
+            # Augmentation (Train only)
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomRotation(degrees=10),
+            
+            transforms.ToTensor(),
+        ]),
+
+        'test': transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+        ]),
+    }
+
+    # =======================================================
+    # 6.3 数据集创建 & 拆分
+    # =======================================================
+    # 🔴 请确认你的数据路径
+    data_dir = r'D:\Study\大三上\science\大创\JPG-处理图\JPG-处理图\zhaodu11-35'
+
+    full_train_ds = MagnesiumDataset(data_dir, transform=data_transforms['train'])
+    full_test_ds  = MagnesiumDataset(data_dir, transform=data_transforms['test'])
+
+    dataset_size = len(full_train_ds)
+    indices = list(range(dataset_size))
+    split = int(np.floor(0.2 * dataset_size))
+
+    np.random.shuffle(indices)
+
+    test_indices, train_indices = indices[:split], indices[split:]
+
+    train_dataset = Subset(full_train_ds, train_indices)
+    test_dataset  = Subset(full_test_ds, test_indices)
+
+    print(f"Data Ready | Train: {len(train_dataset)} | Test: {len(test_dataset)}")
+
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+
+    # =======================================================
+    # 6.4 训练准备 (设备、模型、优化器、损失函数)
+    # =======================================================
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    model = HybridResNet().to(device)
+
+    criterion = nn.SmoothL1Loss()
+    # Slightly higher initial LR for Cosine Annealing
+    optimizer = optim.Adam(model.parameters(), lr=0.0005) 
+
+    num_epochs = 200
+
+    # 🔥 [Option 2] Define Scheduler
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
+
+    # =======================================================
+    # 6.5 启动训练
+    # =======================================================
+    trained_model, train_hist, test_hist = train_model(
+        model, train_loader, test_loader, 
+        criterion, optimizer, scheduler, 
+        num_epochs=num_epochs
+    )
+
+    # =======================================================
+    # 6.6 保存模型 & 可视化结果
+    # =======================================================
+    # 保存模型权重
+    save_path = 'magnesium_hybrid_hist_model.pth'
+    torch.save(trained_model.state_dict(), save_path)
+    print(f"💾 Model saved to: {save_path}")
+
+    # 可视化训练历史
+    plot_history(train_hist, test_hist)
