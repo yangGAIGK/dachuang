@@ -313,20 +313,7 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
 # ===========================================================
 # 5. 可视化函数定义 (全局) - 🟢 [适配 Group Input]
 # ===========================================================
-def plot_history(train_loss, test_mae):
-    epochs = range(1, len(train_loss) + 1)
-    plt.figure(figsize=(12, 5))
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs, train_loss, 'b-', label='Train Loss')
-    plt.title('Training Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs, test_mae, 'r-', label='Test MAE')
-    plt.title('Test Mean Absolute Error (°C)')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+
 
 def plot_scatter(model, test_loader, device):
     model.eval()
@@ -387,7 +374,7 @@ if __name__ == '__main__':
     }
 
     # 🔴 请确认你的数据路径
-    data_dir = r'D:\Study\大三上\science\大创\JPG-处理图\JPG-处理图\zhaodu21-25'
+    data_dir = r'D:\Study\大三上\science\大创\JPG-处理图\JPG-处理图\zhaodu31-35'
 
     full_train_ds = MagnesiumDataset(data_dir, transform=data_transforms['train'])
     full_test_ds  = MagnesiumDataset(data_dir, transform=data_transforms['test'])
@@ -425,9 +412,6 @@ if __name__ == '__main__':
         save_path = 'magnesium_hybrid_group_model.pth'
         torch.save(trained_model.state_dict(), save_path)
         print(f"💾 Model saved to: {save_path}")
-
-        plot_history(train_hist, test_hist)
-        
         # 加载最佳权重并绘图
         model.load_state_dict(torch.load(save_path))
         plot_scatter(model, test_loader, device)
