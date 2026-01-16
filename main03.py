@@ -93,7 +93,7 @@ class ImprovedMagnesiumDataset(Dataset):
         self.transform = transform
         self.is_train = is_train
         
-        valid_extensions = ('.jpg', '.jpeg', '.png')
+        valid_extensions = ('.jpg', '.jpeg', '.png','.tiff')
         self.all_files = [
             f for f in os.listdir(img_dir) 
             if f.lower().endswith(valid_extensions)
@@ -281,7 +281,7 @@ def create_temperature_balanced_split(dataset, test_ratio=0.2):
 # ===========================================================
 # 加载数据
 # ===========================================================
-data_dir = r'D:\Study\大三上\science\大创\JPG-处理图\JPG-处理图\zhaodu21-25'
+data_dir = r'D:\Study\大三上\science\大创\JPG-处理图\非均匀分组'
 
 print("正在加载数据集...")
 full_dataset = ImprovedMagnesiumDataset(data_dir, transform=data_transforms['train'], is_train=True)
